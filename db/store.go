@@ -1,43 +1,39 @@
 package db
 
 import (
-	"sync"
 	"sync/atomic"
 )
 
-type cache struct {
-	mu sync.Mutex
-
+type store struct {
 	growThreshold int32
 	mask          uint32
 	buckets       []*bucket
 
+	// Atomic counters
 	writes int32
 	nodes  int32
 }
 
-func newCache() *cache {
-	c := cache{}
+func newStore() *store {
+	c := store{}
 
-	c.buckets = make([]*bucket, threshold)
-	c.mask = threshold - 1
-	c.growThreshold = int32(threshold * threshold)
+	c.buckets = make([]*bucket, growingSize)
+	c.mask = growingSize - 1
+	c.growThreshold = int32(growingSize * growingSize)
 
 	for k := range c.buckets {
-		c.buckets[k] = &bucket{}
+		c.buckets[k] = new(bucket)
 	}
 
 	return &c
 }
 
-func (c *cache) delete(db *DB, key string) error {
+func (c *store) delete(db *DB, key string) error {
 	atomic.AddInt32(&c.writes, 1)
 	defer func() { atomic.AddInt32(&c.writes, -1) }()
 
 	h := hash([]byte(key), seed)
-
 	k := h & c.mask
-
 	b := c.buckets[k]
 
 	b.delete(key)
@@ -45,7 +41,7 @@ func (c *cache) delete(db *DB, key string) error {
 	return nil
 }
 
-func (c *cache) keys() []string {
+func (c *store) keys() []string {
 	var keys []string
 	for _, b := range c.buckets {
 		keys = append(keys, b.keys()...)
@@ -54,14 +50,11 @@ func (c *cache) keys() []string {
 	return keys
 }
 
-func (c *cache) write(db *DB, key string, val []byte, ttl *int) error {
+func (c *store) write(db *DB, key string, val interface{}, ttl *int) error {
 	atomic.AddInt32(&c.writes, 1)
-	defer func() { atomic.AddInt32(&c.writes, -1) }()
 
 	h := hash([]byte(key), seed)
-
 	k := h & c.mask
-
 	b := c.buckets[k]
 
 	b.save(key, h, val, ttl)
@@ -72,23 +65,22 @@ func (c *cache) write(db *DB, key string, val []byte, ttl *int) error {
 		})
 	}
 
+	atomic.AddInt32(&c.writes, -1)
 	return nil
 }
 
-func (c *cache) read(key string) ([]byte, error) {
+func (c *store) read(key string) (*node, error) {
 	k := hash([]byte(key), seed)
-
 	h := k & c.mask
-
 	b := c.buckets[h]
 
 	if b == nil {
-		return nil, nil
+		return nil, ErrNotFound
 	}
 
 	if n := b.lookup(key); n != nil {
-		return n.Value, nil
+		return n, nil
 	}
 
-	return nil, nil
+	return nil, ErrNotFound
 }

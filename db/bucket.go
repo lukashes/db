@@ -5,31 +5,11 @@ import (
 	"time"
 )
 
-type node struct {
-	Key        string
-	Expiration int
-	Value      []byte
-	Hash       uint32
-}
-
-func (n *node) isAlive() bool {
-	if n == nil || n.Value == nil {
-		return false
-	}
-
-	if n.Expiration == 0 || n.Expiration > time.Now().Second() {
-		return true
-	}
-
-	return false
-}
-
 type bucket struct {
 	mu sync.RWMutex
 
-	Nodes []node
-
-	locked bool
+	// Pointer to first item at the bucket
+	nodes *node
 }
 
 func (b *bucket) do(c func(b *bucket)) {
@@ -39,83 +19,117 @@ func (b *bucket) do(c func(b *bucket)) {
 	c(b)
 }
 
+// Soft delete
+//
+// Set node as expired
 func (b *bucket) delete(key string) {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
-	k := b.find(key)
+	node, found := b.find(key)
 
-	if k > -1 {
-		b.Nodes[k].Expiration = -1
+	if found {
+		node.exp = -1
 	}
+
+	b.mu.Unlock()
 }
 
 func (b *bucket) keys() []string {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
 
-	keys := make([]string, 0, len(b.Nodes))
-	for k := range b.Nodes {
-		if b.Nodes[k].isAlive() {
-			keys = append(keys, b.Nodes[k].Key)
+	keys := make([]string, 0, 20)
+	for n := b.nodes; n != nil; n = n.next {
+		if n.isAlive() {
+			keys = append(keys, n.key)
 		}
 	}
+
+	b.mu.RUnlock()
 
 	return keys
 }
 
-func (b *bucket) find(key string) (pos int) {
-	for k, n := range b.Nodes {
-		if n.Key == key {
-			return k
+// Finds node with provided key or last node in the chain
+func (b *bucket) find(key string) (*node, bool) {
+	if b.nodes == nil {
+		return nil, false
+	}
+
+	var n *node
+	for n = b.nodes; n.next != nil; n = n.next {
+		if n.key == key {
+			return n, true
 		}
 	}
 
-	return -1
+	if n != nil && n.key == key {
+		return n, true
+	}
+
+	return n, false
 }
 
-func (b *bucket) save(key string, hash uint32, val []byte, ttl *int) error {
+func (b *bucket) save(key string, hash uint32, val interface{}, ttl *int) error {
 	b.mu.Lock()
-	defer b.mu.Unlock()
 
-	k := b.find(key)
+	n, found := b.find(key)
 
 	exp := 0
-	if ttl != nil {
+	if ttl != nil { // todo: do not generate time every call
 		exp = time.Now().Second() + *ttl
 	}
 
-	if k < 0 {
-		n := node{
-			Value:      val,
-			Key:        key,
-			Expiration: exp,
-			Hash:       hash,
+	if !found {
+		if n == nil {
+			n = &node{
+				key:  key,
+				exp:  exp,
+				hash: hash,
+			}
+			b.nodes = n
+		} else {
+			n.next = &node{
+				key:  key,
+				exp:  exp,
+				hash: hash,
+			}
+			n = n.next
 		}
-		b.Nodes = append(b.Nodes, n)
-	} else {
-		b.Nodes[k].Expiration = exp
-		b.Nodes[k].Value = val
 	}
 
+	switch t := val.(type) {
+	case []byte:
+		n.value = t
+		n.tipe = TypeHash
+	case []string:
+		n.list = t
+		n.tipe = TypeList
+	case map[string]string:
+		n.dict = t
+		n.tipe = TypeDict
+	default:
+		b.mu.Unlock()
+		return ErrInvalidType
+	}
+
+	b.mu.Unlock()
 	return nil
 }
 
 func (b *bucket) lookup(key string) *node {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
 
-	k := b.find(key)
-
-	if k < 0 {
+	n, found := b.find(key)
+	if !found {
+		b.mu.RUnlock()
 		return nil
 	}
 
-	if !b.Nodes[k].isAlive() {
+	if !n.isAlive() {
+		b.mu.RUnlock()
 		return nil
 	}
 
-	n := b.Nodes[k]
-
-	return &n
+	b.mu.RUnlock()
+	return n
 }

@@ -28,26 +28,36 @@ Now you can create your HTTP requests
 Params:
 
 * key - should be alphanumeric (not validated yet)
-* value - should be write/read from body
+* value - should be in the body
 * ttl - time to live in seconds
 
-### POST /v1/set/key?ttl=seconds
+### POST /v1/hset/key?ttl=seconds
 
-Set value to by the key. If key exists it will be rewritten.
+Set value by the key. If key exists it will be rewritten.
 
-Params:
+### GET /v1/hget/key
 
-### POST /v1/update/key
+Read value by the key
 
-Update value only it exists.
+### POST /v1/lset/key?ttl=seconds
 
-### GET /v1/get/key
+Set list by the key. List should be provided in body as json.
 
-Read value by key
+### GET /v1/lget/key/index
 
-### GET /v1/remove/key
+Read value placed at list index. If index not provided returns whole list as json.
 
-Remove value by key
+### POST /v1/dset/key?ttl=seconds
+
+Set dict by the key. Dict should be provided in body as json.
+
+### GET /v1/dget/key/index
+
+Read value placed at dict index. If index not provided returns whole dict as json.
+
+### GET /v1/rm/key
+
+Remove value by the key
 
 ### GET /v1/keys
 
@@ -65,9 +75,18 @@ Example of client here client/example/main.go
 
 ```
 db$ go test -bench . -benchmem ./db/...
-PASS
-BenchmarkHashTableWrite-4        1000000              1412 ns/op             380 B/op          3 allocs/op
-BenchmarkHashTableRead-4         2000000               975 ns/op              71 B/op          2 allocs/op
+  goos: linux
+  goarch: amd64
+  pkg: github.com/lukashes/db/db
+  BenchmarkMapWrite-4                      2000000               686 ns/op             208 B/op          1 allocs/op
+  BenchmarkMapRead-4                      10000000               168 ns/op               0 B/op          0 allocs/op
+  BenchmarkSyncMapWrite-4                  1000000              1528 ns/op             219 B/op          6 allocs/op
+  BenchmarkSyncMapRead-4                  10000000               330 ns/op               0 B/op          0 allocs/op
+  BenchmarkHashTableWrite-4                2000000              1110 ns/op             193 B/op          4 allocs/op
+  BenchmarkHashTableRead-4                 3000000               632 ns/op               0 B/op          0 allocs/op
+  BenchmarkHashTableWriteList-4            2000000               901 ns/op             185 B/op          3 allocs/op
+  BenchmarkHashTableListItemRead-4         3000000               578 ns/op               0 B/op          0 allocs/op
+  PASS
 ```
 
 ## TODO
